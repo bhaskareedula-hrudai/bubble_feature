@@ -6,6 +6,10 @@
   "framework": null,
   "routes": [
     {
+      "src": "/",
+      "dest": "/demo.html"
+    },
+    {
       "src": "/(.*)",
       "headers": {
         "Access-Control-Allow-Origin": "*",
