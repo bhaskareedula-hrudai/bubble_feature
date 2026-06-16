@@ -1,0 +1,13 @@
+{
+  "name": "bubble-widget",
+  "version": "1.0.0",
+  "description": "Self-hosted floating support widget for NCPL Ticketing",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

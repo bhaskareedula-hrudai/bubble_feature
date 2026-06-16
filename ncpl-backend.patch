@@ -1,0 +1,260 @@
+diff --git a/backend/app/config.py b/backend/app/config.py
+index a853c4f..30f634b 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -65,6 +65,9 @@ MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
+ GREEN_API_INSTANCE_ID = _get("GREEN_API_INSTANCE_ID", "")
+ GREEN_API_TOKEN = _get("GREEN_API_TOKEN", "")
+ 
++WIDGET_API_KEY   = _get("WIDGET_API_KEY", "")
++WIDGET_ADMIN_PHONE = _get("WIDGET_ADMIN_PHONE", "")
++
+ _phone_map_raw = _get("WHATSAPP_PHONE_MAP", "")
+ WHATSAPP_PHONE_MAP_RAW = _phone_map_raw
+ WHATSAPP_PHONE_MAP: dict[str, str] = {}
+diff --git a/backend/app/routers/widget.py b/backend/app/routers/widget.py
+new file mode 100644
+index 0000000..d4f23f9
+--- /dev/null
++++ b/backend/app/routers/widget.py
+@@ -0,0 +1,96 @@
++import logging
++from typing import Optional, Literal
++
++from fastapi import APIRouter, HTTPException, Header, Query
++from pydantic import BaseModel
++
++from ..db import _sb, db_insert, new_id, now, next_ticket_code
++from .. import config, whatsapp
++
++logger = logging.getLogger("ncpl")
++router = APIRouter(tags=["widget"])
++
++
++def _require_widget_key(x_widget_key: Optional[str]) -> None:
++    if not config.WIDGET_API_KEY:
++        raise HTTPException(500, "WIDGET_API_KEY is not configured on this server")
++    if x_widget_key != config.WIDGET_API_KEY:
++        raise HTTPException(401, "Invalid widget API key")
++
++
++class WidgetTicketIn(BaseModel):
++    email: str
++    title: str
++    description: str
++    priority: Literal["Low", "Medium", "High", "Urgent"] = "Medium"
++    app: Optional[str] = None
++
++
++@router.post("/widget/tickets")
++def create_widget_ticket(
++    body: WidgetTicketIn,
++    x_widget_key: Optional[str] = Header(None),
++):
++    _require_widget_key(x_widget_key)
++
++    email = body.email.strip().lower()
++    if not email or "@" not in email:
++        raise HTTPException(400, "Valid email is required")
++
++    source = (body.app or "Widget").strip()
++    ts = now()
++    ticket = {
++        "id":               new_id("tkt"),
++        "code":             next_ticket_code(),
++        "title":            body.title.strip(),
++        "description":      body.description.strip(),
++        "status":           "Open",
++        "priority":         body.priority,
++        "department":       "HR",
++        "created_by":       None,
++        "created_by_name":  email.split("@")[0],
++        "created_by_email": email,
++        "assignee_id":      None,
++        "assignee_name":    None,
++        "source":           source,
++        "due_at":           None,
++        "is_escalated":     0,
++        "escalated_at":     None,
++        "resolved_at":      None,
++        "closed_at":        None,
++        "created_at":       ts,
++        "updated_at":       ts,
++    }
++    db_insert("tickets", ticket)
++    logger.info("Widget ticket created: %s from %s (app=%s)", ticket["code"], email, source)
++
++    try:
++        whatsapp.send_new_ticket_to_admin(ticket)
++    except Exception as exc:
++        logger.warning("Admin WhatsApp notification failed for %s: %s", ticket["code"], exc)
++
++    return {"id": ticket["id"], "code": ticket["code"], "status": "Open"}
++
++
++@router.get("/widget/tickets")
++def list_widget_tickets(
++    email: str = Query(..., description="User email to filter tickets"),
++    app:   Optional[str] = Query(None, description="App name to filter tickets"),
++    x_widget_key: Optional[str] = Header(None),
++):
++    _require_widget_key(x_widget_key)
++
++    email = email.strip().lower()
++    if not email or "@" not in email:
++        raise HTTPException(400, "Valid email is required")
++
++    q = (
++        _sb().table("tickets")
++        .select("id,code,title,status,priority,created_at,source")
++        .eq("created_by_email", email)
++    )
++    if app:
++        q = q.eq("source", app.strip())
++
++    rows = q.order("created_at", desc=True).execute().data or []
++    return rows
+diff --git a/backend/app/whatsapp.py b/backend/app/whatsapp.py
+index 2d2e7d7..ab87232 100644
+--- a/backend/app/whatsapp.py
++++ b/backend/app/whatsapp.py
+@@ -90,6 +90,44 @@ def send_ticket_assigned(ticket: dict) -> bool:
+     return result
+ 
+ 
++def send_new_ticket_to_admin(ticket: dict) -> bool:
++    """Notify the admin channel when a widget ticket is submitted."""
++    phone = config.WIDGET_ADMIN_PHONE
++    if not phone:
++        from .db import _sb as _get_sb
++        try:
++            admins = _get_sb().table("users").select("phone_number").eq("role", "admin").execute().data or []
++            for a in admins:
++                if a.get("phone_number"):
++                    phone = a["phone_number"]
++                    break
++        except Exception:
++            pass
++    if not phone:
++        phone_map = _get_phone_map()
++        if phone_map:
++            phone = next(iter(phone_map.values()))
++    if not phone:
++        logger.warning("No admin phone configured for widget notifications")
++        return False
++
++    ticket_url = f"{config.FRONTEND_URL}/tickets/{ticket['id']}"
++    source = ticket.get("source") or "Widget"
++    message = (
++        f"🎫 New support ticket from {source}\n\n"
++        f"Ticket  : {ticket.get('code', '')}\n"
++        f"Title   : {ticket.get('title', '')}\n"
++        f"Priority: {ticket.get('priority', '')}\n"
++        f"From    : {ticket.get('created_by_email', '')}\n\n"
++        f"View: {ticket_url}\n\n"
++        f"— NCPL Ticketing System"
++    )
++    result = _do_send(phone, message)
++    if result:
++        logger.info("Admin WhatsApp sent to %s for widget ticket %s", phone, ticket.get("code"))
++    return result
++
++
+ def send_test_message() -> bool:
+     phone_map = _get_phone_map()
+     if not phone_map:
+diff --git a/backend/main.py b/backend/main.py
+index 222d157..f37a1a7 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -10,15 +10,38 @@ if str(_BACKEND_DIR) not in sys.path:
+ 
+ from fastapi import FastAPI
+ from fastapi.middleware.cors import CORSMiddleware
++from fastapi.responses import Response
++from starlette.middleware.base import BaseHTTPMiddleware
++from starlette.requests import Request as StarletteRequest
+ 
+ from app import config
+-from app.routers import auth, tickets, departments, employees, dashboard
++from app.routers import auth, tickets, departments, employees, dashboard, widget
+ from app.routers import settings as settings_router
+ 
+ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+ logger = logging.getLogger("ncpl")
+ 
+ 
++class _WidgetCORSMiddleware(BaseHTTPMiddleware):
++    """Allow any origin for /api/widget/* (API-key auth, no cookies)."""
++    _WIDGET_HEADERS = {
++        "Access-Control-Allow-Origin":  "*",
++        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
++        "Access-Control-Allow-Headers": "X-Widget-Key, Content-Type",
++        "Access-Control-Max-Age":       "3600",
++    }
++
++    async def dispatch(self, request: StarletteRequest, call_next):
++        if not request.url.path.startswith("/api/widget"):
++            return await call_next(request)
++        if request.method == "OPTIONS":
++            return Response(status_code=204, headers=self._WIDGET_HEADERS)
++        response = await call_next(request)
++        for k, v in self._WIDGET_HEADERS.items():
++            response.headers[k] = v
++        return response
++
++
+ def create_app() -> FastAPI:
+     app = FastAPI(title="NCPL Ticketing API", version="2.0")
+ 
+@@ -39,6 +62,9 @@ def create_app() -> FastAPI:
+             allow_headers=["*"],
+         )
+ 
++    # Must be added after CORSMiddleware so it runs first (LIFO stack)
++    app.add_middleware(_WidgetCORSMiddleware)
++
+     prefix = "/api"
+     app.include_router(auth.router, prefix=prefix)
+     app.include_router(tickets.router, prefix=prefix)
+@@ -46,6 +72,7 @@ def create_app() -> FastAPI:
+     app.include_router(employees.router, prefix=prefix)
+     app.include_router(dashboard.router, prefix=prefix)
+     app.include_router(settings_router.router, prefix=prefix)
++    app.include_router(widget.router, prefix=prefix)
+ 
+     @app.get("/api")
+     def health():
+diff --git a/supabase/schema.sql b/supabase/schema.sql
+index 135acda..73142c6 100644
+--- a/supabase/schema.sql
++++ b/supabase/schema.sql
+@@ -55,10 +55,14 @@ CREATE TABLE IF NOT EXISTS public.tickets (
+     escalated_at     TIMESTAMPTZ,
+     resolved_at      TIMESTAMPTZ,
+     closed_at        TIMESTAMPTZ,
++    source           TEXT,
+     created_at       TIMESTAMPTZ,
+     updated_at       TIMESTAMPTZ
+ );
+ 
++-- Run this if your tickets table already exists (one-time migration):
++-- ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS source TEXT;
++
+ 
+ -- ─── COMMENTS ────────────────────────────────────────────────
+ CREATE TABLE IF NOT EXISTS public.comments (
+@@ -90,6 +94,13 @@ CREATE TABLE IF NOT EXISTS public.attachments (
+ );
+ 
+ 
++-- ─── APP SETTINGS ────────────────────────────────────────────
++CREATE TABLE IF NOT EXISTS public.app_settings (
++    key   TEXT PRIMARY KEY,
++    value TEXT
++);
++
++
+ -- ─── TICKET COUNTER ──────────────────────────────────────────
+ -- Tracks the last-used ticket number for NCP-XXXX codes.
+ CREATE TABLE IF NOT EXISTS public.ticket_counter (
