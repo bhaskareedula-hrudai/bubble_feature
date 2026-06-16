@@ -14,10 +14,12 @@
     return s[s.length - 1];
   })();
 
-  const CFG = {
-    apiUrl: (_script.getAttribute('data-api-url') || '').replace(/\/$/, ''),
-    apiKey: _script.getAttribute('data-api-key') || '',
-    app:    _script.getAttribute('data-app') || 'Support',
+    const CFG = {
+    apiUrl:      (_script.getAttribute('data-api-url') || '').replace(/\/$/, ''),
+    apiKey:      _script.getAttribute('data-api-key') || '',
+    app:         _script.getAttribute('data-app') || 'Support',
+    departments: (_script.getAttribute('data-departments') || 'IT,HR,Finance,Operations,Admin')
+                   .split(',').map(function(d){ return d.trim(); }).filter(Boolean),
   };
 
   if (!CFG.apiUrl) {
@@ -163,6 +165,10 @@
     '.bbl-pri-high{background:#f97316}',
     '.bbl-pri-urgent{background:#ef4444}',
 
+        /* department tag */
+    '.bbl-dept{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;',
+    'background:#f0f4ff;color:#4f46e5;white-space:nowrap}',
+
     /* loading / empty states */
     '.bbl-loading,.bbl-empty{text-align:center;color:#94a3b8;padding:28px 16px;font-size:13px;line-height:1.6}',
     '.bbl-spinner{width:24px;height:24px;border:3px solid #e2e8f0;border-top-color:#4f46e5;',
@@ -240,6 +246,7 @@
           '<div class="bbl-card-foot">',
             '<span class="', esc(priClass(t.priority)), '" title="', esc(t.priority), ' priority"></span>',
             '<span>', esc(t.priority), '</span>',
+                        t.department ? '<span>·</span><span class="bbl-dept">' + esc(t.department) + '</span>' : '',
             '<span>·</span>',
             '<span>', esc(fmtDate(t.created_at)), '</span>',
           '</div>',
@@ -291,10 +298,19 @@
   /* ── Form submit ──────────────────────────────────────────── */
   function handleSubmit(e) {
     e.preventDefault();
-    var email    = form.querySelector('[name=email]').value.trim();
-    var title    = form.querySelector('[name=title]').value.trim();
-    var descr    = form.querySelector('[name=description]').value.trim();
-    var priority = form.querySelector('[name=priority]').value;
+        var email      = form.querySelector('[name=email]').value.trim();
+    var deptEl     = form.querySelector('[name=department]');
+    var department = deptEl.value;
+    var title      = form.querySelector('[name=title]').value.trim();
+    var descr      = form.querySelector('[name=description]').value.trim();
+    var priority   = form.querySelector('[name=priority]').value;
+
+    if (!department) {
+      deptEl.classList.add('bbl-err');
+      deptEl.focus();
+      return;
+    }
+    deptEl.classList.remove('bbl-err');
 
     msgEl.className = '';
     msgEl.style.display = 'none';
@@ -303,8 +319,7 @@
 
     apiFetch('POST', '/api/widget/tickets', {
       email: email, title: title, description: descr,
-      priority: priority, app: CFG.app,
-    }).then(function(result) {
+      priority: priority, department: department, app: CFG.app,    }).then(function(result) {
       saveEmail(email);
       mineEmail = email;
       mineEmailEl.value = email;
@@ -334,8 +349,11 @@
     document.head.appendChild(styleEl);
 
     /* root wrapper */
-    var wrap = document.createElement('div');
+        var wrap = document.createElement('div');
     wrap.id  = 'bbl-wrap';
+    var deptHtml = CFG.departments.map(function(d){
+      return '<option value="' + esc(d) + '">' + esc(d) + '</option>';
+    }).join('');
     wrap.innerHTML = [
       /* floating button */
       '<button id="bbl-btn" title="Support">',
@@ -374,6 +392,14 @@
                 '<label class="bbl-label">Email *</label>',
                 '<input class="bbl-input" type="email" name="email"',
                     ' placeholder="you@company.com" required autocomplete="email">',
+              '</div>',
+
+                            '<div class="bbl-field">',
+                '<label class="bbl-label">Department *</label>',
+                '<select class="bbl-input" name="department" required>',
+                  '<option value="">Select department…</option>',
+                  deptHtml,
+                '</select>',
               '</div>',
 
               '<div class="bbl-field">',
@@ -467,6 +493,10 @@
     mineEmailEl.addEventListener('keydown', function(e){
       if (e.key === 'Enter') mineGoBtn.click();
     });
+        form.querySelector('[name=department]').addEventListener('change', function(){
+      this.classList.remove('bbl-err');
+    });
+
     mineEmailEl.addEventListener('input', function(){
       mineEmailEl.classList.remove('bbl-err');
     });

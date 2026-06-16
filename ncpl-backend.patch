@@ -17,7 +17,7 @@ new file mode 100644
 index 0000000..d4f23f9
 --- /dev/null
 +++ b/backend/app/routers/widget.py
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,97 @@
 +import logging
 +from typing import Optional, Literal
 +
@@ -43,6 +43,7 @@ index 0000000..d4f23f9
 +    title: str
 +    description: str
 +    priority: Literal["Low", "Medium", "High", "Urgent"] = "Medium"
++    department: Optional[str] = None
 +    app: Optional[str] = None
 +
 +
@@ -66,7 +67,7 @@ index 0000000..d4f23f9
 +        "description":      body.description.strip(),
 +        "status":           "Open",
 +        "priority":         body.priority,
-+        "department":       "HR",
++        "department":       (body.department or "General").strip(),
 +        "created_by":       None,
 +        "created_by_name":  email.split("@")[0],
 +        "created_by_email": email,
@@ -85,9 +86,9 @@ index 0000000..d4f23f9
 +    logger.info("Widget ticket created: %s from %s (app=%s)", ticket["code"], email, source)
 +
 +    try:
-+        whatsapp.send_new_ticket_to_admin(ticket)
++        whatsapp.send_new_ticket_to_department(ticket)
 +    except Exception as exc:
-+        logger.warning("Admin WhatsApp notification failed for %s: %s", ticket["code"], exc)
++        logger.warning("Department WhatsApp notification failed for %s: %s", ticket["code"], exc)
 +
 +    return {"id": ticket["id"], "code": ticket["code"], "status": "Open"}
 +
@@ -106,7 +107,7 @@ index 0000000..d4f23f9
 +
 +    q = (
 +        _sb().table("tickets")
-+        .select("id,code,title,status,priority,created_at,source")
++        .select("id,code,title,status,priority,department,created_at,source")
 +        .eq("created_by_email", email)
 +    )
 +    if app:
@@ -118,7 +119,7 @@ diff --git a/backend/app/whatsapp.py b/backend/app/whatsapp.py
 index 2d2e7d7..ab87232 100644
 --- a/backend/app/whatsapp.py
 +++ b/backend/app/whatsapp.py
-@@ -90,6 +90,44 @@ def send_ticket_assigned(ticket: dict) -> bool:
+@@ -90,6 +90,95 @@ def send_ticket_assigned(ticket: dict) -> bool:
      return result
  
  
@@ -158,6 +159,56 @@ index 2d2e7d7..ab87232 100644
 +    if result:
 +        logger.info("Admin WhatsApp sent to %s for widget ticket %s", phone, ticket.get("code"))
 +    return result
++
++
++def send_new_ticket_to_department(ticket: dict) -> bool:
++    """Notify all members of the ticket's department via WhatsApp; falls back to admin."""
++    dept_name = (ticket.get("department") or "").strip()
++    if not dept_name:
++        return send_new_ticket_to_admin(ticket)
++
++    try:
++        dept_rows = _sb().table("departments").select("id").eq("name", dept_name).execute().data or []
++        if not dept_rows:
++            logger.warning("Department '%s' not found; falling back to admin notify", dept_name)
++            return send_new_ticket_to_admin(ticket)
++
++        dept_id = dept_rows[0]["id"]
++        members = (
++            _sb().table("users")
++            .select("phone_number")
++            .eq("department_id", dept_id)
++            .not_.is_("phone_number", "null")
++            .execute().data or []
++        )
++
++        ticket_url = f"{config.FRONTEND_URL}/tickets/{ticket['id']}"
++        source = ticket.get("source") or "Widget"
++        message = (
++            f"🎫 New support ticket for {dept_name} ({source})\n\n"
++            f"Ticket  : {ticket.get('code', '')}\n"
++            f"Title   : {ticket.get('title', '')}\n"
++            f"Priority: {ticket.get('priority', '')}\n"
++            f"From    : {ticket.get('created_by_email', '')}\n\n"
++            f"View: {ticket_url}\n\n"
++            f"— NCPL Ticketing System"
++        )
++
++        notified = False
++        for m in members:
++            phone = (m.get("phone_number") or "").strip()
++            if phone and _do_send(phone, message):
++                logger.info("WhatsApp sent to dept member %s for ticket %s", phone, ticket.get("code"))
++                notified = True
++
++        if not notified:
++            logger.warning("No dept members notified for '%s'; falling back to admin", dept_name)
++            return send_new_ticket_to_admin(ticket)
++        return True
++
++    except Exception as exc:
++        logger.warning("Department notification failed for %s: %s", ticket.get("code"), exc)
++        return send_new_ticket_to_admin(ticket)
 +
 +
  def send_test_message() -> bool:
