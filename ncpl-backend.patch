@@ -17,7 +17,7 @@ new file mode 100644
 index 0000000..d4f23f9
 --- /dev/null
 +++ b/backend/app/routers/widget.py
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,143 @@
 +import logging
 +from typing import Optional, Literal
 +
@@ -109,6 +109,53 @@ index 0000000..d4f23f9
 +        _sb().table("tickets")
 +        .select("id,code,title,status,priority,department,created_at,source")
 +        .eq("created_by_email", email)
++    )
++    if app:
++        q = q.eq("source", app.strip())
++
++    rows = q.order("created_at", desc=True).execute().data or []
++    return rows
++
++
++@router.get("/widget/departments")
++def list_departments(x_widget_key: Optional[str] = Header(None)):
++    _require_widget_key(x_widget_key)
++    rows = _sb().table("departments").select("id,name").order("name").execute().data or []
++    return [{"id": r["id"], "name": r["name"]} for r in rows]
++
++
++@router.get("/widget/department-tickets")
++def list_department_tickets(
++    staff_email: str = Query(..., description="Staff member email to resolve department"),
++    app: Optional[str] = Query(None, description="App name to filter tickets"),
++    x_widget_key: Optional[str] = Header(None),
++):
++    _require_widget_key(x_widget_key)
++
++    staff_email = staff_email.strip().lower()
++    if not staff_email or "@" not in staff_email:
++        raise HTTPException(400, "Valid staff email is required")
++
++    users = (
++        _sb().table("users").select("department_id")
++        .eq("email", staff_email).execute().data or []
++    )
++    if not users:
++        raise HTTPException(403, "Staff member not found")
++
++    dept_id = users[0].get("department_id")
++    if not dept_id:
++        raise HTTPException(403, "Staff member has no department assigned")
++
++    depts = _sb().table("departments").select("name").eq("id", dept_id).execute().data or []
++    if not depts:
++        raise HTTPException(403, "Department not found")
++
++    dept_name = depts[0]["name"]
++    q = (
++        _sb().table("tickets")
++        .select("id,code,title,status,priority,department,created_by_name,created_by_email,created_at,source")
++        .eq("department", dept_name)
 +    )
 +    if app:
 +        q = q.eq("source", app.strip())

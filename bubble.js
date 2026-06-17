@@ -14,12 +14,13 @@
     return s[s.length - 1];
   })();
 
-    const CFG = {
+  const CFG = {
     apiUrl:      (_script.getAttribute('data-api-url') || '').replace(/\/$/, ''),
     apiKey:      _script.getAttribute('data-api-key') || '',
     app:         _script.getAttribute('data-app') || 'Support',
     departments: (_script.getAttribute('data-departments') || 'IT,HR,Finance,Operations,Admin')
                    .split(',').map(function(d){ return d.trim(); }).filter(Boolean),
+    staffEmail:  (_script.getAttribute('data-staff-email') || '').trim().toLowerCase(),
   };
 
   if (!CFG.apiUrl) {
@@ -165,9 +166,17 @@
     '.bbl-pri-high{background:#f97316}',
     '.bbl-pri-urgent{background:#ef4444}',
 
-        /* department tag */
+    /* department tag */
     '.bbl-dept{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;',
     'background:#f0f4ff;color:#4f46e5;white-space:nowrap}',
+
+    /* inbox badge */
+    '#bbl-inbox-badge{background:#ef4444;color:#fff;font-size:10px;font-weight:700;',
+    'padding:1px 5px;border-radius:8px;margin-left:4px;display:none}',
+
+    /* card submitter line */
+    '.bbl-card-sub{font-size:11px;color:#64748b;margin-top:2px;',
+    'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 
     /* loading / empty states */
     '.bbl-loading,.bbl-empty{text-align:center;color:#94a3b8;padding:28px 16px;font-size:13px;line-height:1.6}',
@@ -202,11 +211,13 @@
   var btn, panel, closeBtn, tabs, paneNew, paneMine;
   var form, submitBtn, msgEl, badge;
   var mineBadge, minePrompt, mineEmailEl, mineGoBtn, ticketList;
+  var inboxBadge, paneInbox, inboxList;
 
   var isOpen = false;
   var currentTab = 'new';
-  var mineEmail = '';       // the email currently shown in Mine tab
+  var mineEmail = '';
   var mineLoaded = false;
+  var inboxLoaded = false;
 
   /* ── Open / close ─────────────────────────────────────────── */
   function open() {
@@ -225,7 +236,9 @@
     tabs.forEach(function(el){ el.classList.toggle('bbl-active', el.dataset.tab === t); });
     paneNew.classList.toggle('bbl-active', t === 'new');
     paneMine.classList.toggle('bbl-active', t === 'mine');
+    if (paneInbox) paneInbox.classList.toggle('bbl-active', t === 'inbox');
     if (t === 'mine' && mineEmail && !mineLoaded) loadTickets(mineEmail);
+    if (t === 'inbox' && !inboxLoaded) loadInbox();
   }
 
   /* ── Render ticket list ───────────────────────────────────── */
@@ -246,7 +259,7 @@
           '<div class="bbl-card-foot">',
             '<span class="', esc(priClass(t.priority)), '" title="', esc(t.priority), ' priority"></span>',
             '<span>', esc(t.priority), '</span>',
-                        t.department ? '<span>·</span><span class="bbl-dept">' + esc(t.department) + '</span>' : '',
+            t.department ? '<span>·</span><span class="bbl-dept">' + esc(t.department) + '</span>' : '',
             '<span>·</span>',
             '<span>', esc(fmtDate(t.created_at)), '</span>',
           '</div>',
@@ -295,10 +308,90 @@
       .catch(function(){});
   }
 
+  /* ── Departments from Supabase ───────────────────────────── */
+  function loadDepartments() {
+    var sel = form ? form.querySelector('[name=department]') : null;
+    if (!sel) return;
+    apiFetch('GET', '/api/widget/departments')
+      .then(function(depts) {
+        if (!depts || !depts.length) throw new Error('empty');
+        sel.innerHTML = '<option value="">Select department…</option>' +
+          depts.map(function(d){
+            return '<option value="' + esc(d.name) + '">' + esc(d.name) + '</option>';
+          }).join('');
+      })
+      .catch(function() {
+        sel.innerHTML = '<option value="">Select department…</option>' +
+          CFG.departments.map(function(d){
+            return '<option value="' + esc(d) + '">' + esc(d) + '</option>';
+          }).join('');
+      });
+  }
+
+  /* ── Staff inbox ──────────────────────────────────────────── */
+  function loadInbox() {
+    if (!CFG.staffEmail || !inboxList) return;
+    inboxLoaded = false;
+    inboxList.innerHTML = '<div class="bbl-loading"><div class="bbl-spinner"></div>Loading inbox…</div>';
+    var params = '?staff_email=' + encodeURIComponent(CFG.staffEmail) + '&app=' + encodeURIComponent(CFG.app);
+    apiFetch('GET', '/api/widget/department-tickets' + params)
+      .then(function(list) { renderInboxTickets(list); updateInboxCounts(list); })
+      .catch(function(err) {
+        inboxLoaded = false;
+        inboxList.innerHTML = '<div class="bbl-empty">Could not load inbox.<br><small>' + esc(err.message) + '</small></div>';
+      });
+  }
+
+  function renderInboxTickets(list) {
+    inboxLoaded = true;
+    if (!list.length) {
+      inboxList.innerHTML = '<div class="bbl-empty">No tickets in your department yet.</div>';
+      return;
+    }
+    inboxList.innerHTML = list.map(function(t) {
+      return [
+        '<div class="bbl-card">',
+          '<div class="bbl-card-top">',
+            '<span class="bbl-code">', esc(t.code), '</span>',
+            '<span class="', esc(pillClass(t.status)), '">', esc(t.status), '</span>',
+          '</div>',
+          '<div class="bbl-card-title">', esc(t.title), '</div>',
+          '<div class="bbl-card-sub">from: ', esc(t.created_by_email || t.created_by_name || ''), '</div>',
+          '<div class="bbl-card-foot">',
+            '<span class="', esc(priClass(t.priority)), '" title="', esc(t.priority), ' priority"></span>',
+            '<span>', esc(t.priority), '</span>',
+            '<span>·</span>',
+            '<span>', esc(fmtDate(t.created_at)), '</span>',
+          '</div>',
+        '</div>',
+      ].join('');
+    }).join('');
+  }
+
+  function updateInboxCounts(list) {
+    var open = list.filter(function(t){
+      return t.status === 'Open' || t.status === 'In Progress' || t.status === 'Pending';
+    }).length;
+    if (inboxBadge) {
+      inboxBadge.textContent = open;
+      inboxBadge.style.display = open ? 'inline' : 'none';
+    }
+    badge.textContent = open;
+    badge.style.display = open ? 'flex' : 'none';
+  }
+
+  function refreshInboxCounts() {
+    if (!CFG.staffEmail) return;
+    var params = '?staff_email=' + encodeURIComponent(CFG.staffEmail) + '&app=' + encodeURIComponent(CFG.app);
+    apiFetch('GET', '/api/widget/department-tickets' + params)
+      .then(updateInboxCounts)
+      .catch(function(){});
+  }
+
   /* ── Form submit ──────────────────────────────────────────── */
   function handleSubmit(e) {
     e.preventDefault();
-        var email      = form.querySelector('[name=email]').value.trim();
+    var email      = form.querySelector('[name=email]').value.trim();
     var deptEl     = form.querySelector('[name=department]');
     var department = deptEl.value;
     var title      = form.querySelector('[name=title]').value.trim();
@@ -319,14 +412,15 @@
 
     apiFetch('POST', '/api/widget/tickets', {
       email: email, title: title, description: descr,
-      priority: priority, department: department, app: CFG.app,    }).then(function(result) {
+      priority: priority, department: department, app: CFG.app,
+    }).then(function(result) {
       saveEmail(email);
       mineEmail = email;
       mineEmailEl.value = email;
       mineLoaded = false;
       form.querySelector('[name=title]').value = '';
       form.querySelector('[name=description]').value = '';
-      msgEl.textContent = '✓ Ticket ' + result.code + ' submitted! We’ll be in touch.';
+      msgEl.textContent = '✓ Ticket ' + result.code + ' submitted! We\u2019ll be in touch.';
       msgEl.className = 'bbl-ok';
       msgEl.style.display = 'block';
       refreshCounts(email);
@@ -349,7 +443,7 @@
     document.head.appendChild(styleEl);
 
     /* root wrapper */
-        var wrap = document.createElement('div');
+    var wrap = document.createElement('div');
     wrap.id  = 'bbl-wrap';
     var deptHtml = CFG.departments.map(function(d){
       return '<option value="' + esc(d) + '">' + esc(d) + '</option>';
@@ -379,6 +473,7 @@
           '<button class="bbl-tab" data-tab="mine">',
             'My Tickets<span id="bbl-mine-badge"></span>',
           '</button>',
+          CFG.staffEmail ? '<button class="bbl-tab" data-tab="inbox">Inbox<span id="bbl-inbox-badge"></span></button>' : '',
         '</div>',
 
         /* body */
@@ -394,7 +489,7 @@
                     ' placeholder="you@company.com" required autocomplete="email">',
               '</div>',
 
-                            '<div class="bbl-field">',
+              '<div class="bbl-field">',
                 '<label class="bbl-label">Department *</label>',
                 '<select class="bbl-input" name="department" required>',
                   '<option value="">Select department…</option>',
@@ -440,6 +535,15 @@
             '<div id="bbl-ticket-list"></div>',
           '</div>',
 
+          /* ─ Inbox pane (staff only) ─ */
+          CFG.staffEmail ? [
+            '<div id="bbl-pane-inbox" class="bbl-pane">',
+              '<div id="bbl-inbox-list">',
+                '<div class="bbl-loading"><div class="bbl-spinner"></div>Loading inbox…</div>',
+              '</div>',
+            '</div>',
+          ].join('') : '',
+
         '</div>', /* #bbl-body */
       '</div>',   /* #bbl-panel */
     ].join('');
@@ -462,6 +566,11 @@
     mineEmailEl= document.getElementById('bbl-mine-email');
     mineGoBtn  = document.getElementById('bbl-mine-go');
     ticketList = document.getElementById('bbl-ticket-list');
+    if (CFG.staffEmail) {
+      inboxBadge = document.getElementById('bbl-inbox-badge');
+      paneInbox  = document.getElementById('bbl-pane-inbox');
+      inboxList  = document.getElementById('bbl-inbox-list');
+    }
 
     /* pre-fill saved email */
     var saved = getEmail();
@@ -493,15 +602,21 @@
     mineEmailEl.addEventListener('keydown', function(e){
       if (e.key === 'Enter') mineGoBtn.click();
     });
-        form.querySelector('[name=department]').addEventListener('change', function(){
+    form.querySelector('[name=department]').addEventListener('change', function(){
       this.classList.remove('bbl-err');
     });
-
     mineEmailEl.addEventListener('input', function(){
       mineEmailEl.classList.remove('bbl-err');
     });
 
-    /* silently load counts for the badge on first load */
+    /* load departments from Supabase; falls back to data-departments */
+    loadDepartments();
+
+    /* staff inbox: load on init + poll every 30s */
+    if (CFG.staffEmail) {
+      loadInbox();
+      setInterval(refreshInboxCounts, 30000);
+    }
     if (saved) refreshCounts(saved);
   }
 
