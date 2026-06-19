@@ -139,6 +139,17 @@
     '.bbl-spinner{width:24px;height:24px;border:3px solid #e2e8f0;border-top-color:#4f46e5;',
     'border-radius:50%;animation:bbl-spin .7s linear infinite;margin:0 auto 10px}',
     '@keyframes bbl-spin{to{transform:rotate(360deg)}}',
+    '.bbl-actions{margin-top:8px;display:flex;gap:5px;flex-wrap:wrap}',
+    '.bbl-act{padding:3px 10px;border-radius:6px;border:1.5px solid;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s;background:none}',
+    '.bbl-act:disabled{opacity:.5;cursor:not-allowed}',
+    '.bbl-act-start{color:#2563eb;border-color:#bfdbfe;background:#eff6ff}',
+    '.bbl-act-start:hover:not(:disabled){background:#dbeafe}',
+    '.bbl-act-resolve{color:#16a34a;border-color:#bbf7d0;background:#f0fdf4}',
+    '.bbl-act-resolve:hover:not(:disabled){background:#dcfce7}',
+    '.bbl-act-close{color:#64748b;border-color:#e2e8f0;background:#f8fafc}',
+    '.bbl-act-close:hover:not(:disabled){background:#f1f5f9}',
+    '.bbl-act-escalate{color:#ea580c;border-color:#fed7aa;background:#fff7ed}',
+    '.bbl-act-escalate:hover:not(:disabled){background:#ffedd5}',
     '@media(max-width:420px){',
     '#bbl-panel{width:calc(100vw - 24px);right:12px;bottom:80px}',
     '#bbl-btn{right:12px;bottom:12px}',
@@ -187,6 +198,51 @@
     if (t === 'inbox' && !inboxLoaded) loadInbox();
   }
 
+  // ── Status action buttons ──────────────────────────────────
+
+  function updateTicketStatus(ticketId, action, email, btn, onSuccess) {
+    btn.disabled = true;
+    var orig = btn.textContent;
+    btn.textContent = '…';
+    apiFetch('PATCH', '/api/widget/tickets/' + encodeURIComponent(ticketId) + '/status', { action: action, email: email })
+      .then(function() { onSuccess(); })
+      .catch(function(err) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        var errEl = document.createElement('span');
+        errEl.style.cssText = 'color:#dc2626;font-size:11px;margin-left:6px';
+        errEl.textContent = err.message || 'Failed';
+        btn.parentNode.appendChild(errEl);
+        setTimeout(function(){ if (errEl.parentNode) errEl.parentNode.removeChild(errEl); }, 3000);
+      });
+  }
+
+  function myTicketActions(t) {
+    var btns = [], s = t.status;
+    if (s === 'Open' || s === 'Pending' || s === 'In Progress') {
+      btns.push('<button class="bbl-act bbl-act-escalate" data-action="escalate" data-id="' + esc(t.id) + '">Escalate</button>');
+    }
+    if (s === 'Resolved') {
+      btns.push('<button class="bbl-act bbl-act-escalate" data-action="reopen" data-id="' + esc(t.id) + '">Not Resolved</button>');
+      btns.push('<button class="bbl-act bbl-act-close" data-action="close" data-id="' + esc(t.id) + '">Close Ticket</button>');
+    }
+    return btns.length ? '<div class="bbl-actions">' + btns.join('') + '</div>' : '';
+  }
+
+  function assignedActions(t) {
+    var btns = [], s = t.status;
+    if (s === 'Open') {
+      btns.push('<button class="bbl-act bbl-act-start" data-action="start" data-id="' + esc(t.id) + '">In Progress</button>');
+    }
+    if (s === 'Open' || s === 'In Progress' || s === 'Pending') {
+      btns.push('<button class="bbl-act bbl-act-resolve" data-action="resolve" data-id="' + esc(t.id) + '">Resolved</button>');
+      btns.push('<button class="bbl-act bbl-act-close" data-action="close" data-id="' + esc(t.id) + '">Closed</button>');
+    }
+    return btns.length ? '<div class="bbl-actions">' + btns.join('') + '</div>' : '';
+  }
+
+  // ── Ticket rendering ───────────────────────────────────────
+
   function renderTickets(list) {
     mineLoaded = true;
     if (!list.length) {
@@ -208,6 +264,7 @@
             t.assignee_name ? '<span>·</span><span class="bbl-assignee-tag">→ ' + esc(t.assignee_name) + '</span>' : '',
             '<span>·</span><span>', esc(fmtDate(t.created_at)), '</span>',
           '</div>',
+          myTicketActions(t),
         '</div>',
       ].join('');
     }).join('');
@@ -264,6 +321,7 @@
             t.department ? '<span>·</span><span class="bbl-dept">' + esc(t.department) + '</span>' : '',
             '<span>·</span><span>', esc(fmtDate(t.created_at)), '</span>',
           '</div>',
+          assignedActions(t),
         '</div>',
       ].join('');
     }).join('');
@@ -571,6 +629,26 @@
     });
     assignedEmailEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') assignedGoBtn.click(); });
     assignedEmailEl.addEventListener('input', function(){ assignedEmailEl.classList.remove('bbl-err'); });
+
+    // Action button delegation — My Tickets
+    ticketList.addEventListener('click', function(e) {
+      var b = e.target.closest('.bbl-act');
+      if (!b || b.disabled) return;
+      updateTicketStatus(b.dataset.id, b.dataset.action, mineEmail, b, function() {
+        mineLoaded = false;
+        loadTickets(mineEmail);
+      });
+    });
+
+    // Action button delegation — Assigned
+    assignedList.addEventListener('click', function(e) {
+      var b = e.target.closest('.bbl-act');
+      if (!b || b.disabled) return;
+      updateTicketStatus(b.dataset.id, b.dataset.action, assignedEmail, b, function() {
+        assignedLoaded = false;
+        loadAssigned(assignedEmail);
+      });
+    });
 
     form.querySelector('[name=department]').addEventListener('change', function(){
       this.classList.remove('bbl-err');
