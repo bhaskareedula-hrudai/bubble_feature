@@ -82,6 +82,8 @@
     'padding:1px 5px;border-radius:8px;margin-left:4px;display:none}',
     '#bbl-inbox-badge{background:#ef4444;color:#fff;font-size:10px;font-weight:700;',
     'padding:1px 5px;border-radius:8px;margin-left:4px;display:none}',
+    '#bbl-assigned-badge{background:#8b5cf6;color:#fff;font-size:10px;font-weight:700;',
+    'padding:1px 5px;border-radius:8px;margin-left:4px;display:none}',
     '#bbl-body{overflow-y:auto;flex:1;scroll-behavior:smooth}',
     '.bbl-pane{padding:16px;display:none}',
     '.bbl-pane.bbl-active{display:block}',
@@ -160,13 +162,16 @@
   var form, submitBtn, msgEl, badge;
   var mineBadge, minePrompt, mineEmailEl, mineGoBtn, ticketList;
   var inboxBadge, paneInbox, inboxList;
+  var assignedBadge, paneAssigned, assignedList, assignedPrompt, assignedEmailEl, assignedGoBtn;
 
   var isOpen = false, currentTab = 'new', mineEmail = '', mineLoaded = false, inboxLoaded = false;
+  var assignedEmail = '', assignedLoaded = false;
 
   function open() {
     isOpen = true;
     panel.classList.add('bbl-open');
     if (currentTab === 'mine' && mineEmail && !mineLoaded) loadTickets(mineEmail);
+    if (currentTab === 'assigned' && assignedEmail && !assignedLoaded) loadAssigned(assignedEmail);
   }
   function close() { isOpen = false; panel.classList.remove('bbl-open'); }
 
@@ -175,8 +180,10 @@
     tabs.forEach(function(el){ el.classList.toggle('bbl-active', el.dataset.tab === t); });
     paneNew.classList.toggle('bbl-active', t === 'new');
     paneMine.classList.toggle('bbl-active', t === 'mine');
+    paneAssigned.classList.toggle('bbl-active', t === 'assigned');
     if (paneInbox) paneInbox.classList.toggle('bbl-active', t === 'inbox');
     if (t === 'mine' && mineEmail && !mineLoaded) loadTickets(mineEmail);
+    if (t === 'assigned' && assignedEmail && !assignedLoaded) loadAssigned(assignedEmail);
     if (t === 'inbox' && !inboxLoaded) loadInbox();
   }
 
@@ -229,6 +236,50 @@
     if (!email) return;
     apiFetch('GET', '/api/widget/tickets?email=' + encodeURIComponent(email) + '&app=' + encodeURIComponent(CFG.app))
       .then(updateCounts).catch(function(){});
+  }
+
+  function updateAssignedCounts(list) {
+    var active = list.filter(function(t){ return t.status==='Open'||t.status==='In Progress'||t.status==='Pending'; }).length;
+    if (assignedBadge) { assignedBadge.textContent = active; assignedBadge.style.display = active ? 'inline' : 'none'; }
+  }
+
+  function renderAssignedTickets(list) {
+    assignedLoaded = true;
+    if (!list.length) {
+      assignedList.innerHTML = '<div class="bbl-empty">No tickets assigned to you yet.</div>';
+      return;
+    }
+    assignedList.innerHTML = list.map(function(t) {
+      return [
+        '<div class="bbl-card">',
+          '<div class="bbl-card-top">',
+            '<span class="bbl-code">', esc(t.code), '</span>',
+            '<span class="', esc(pillClass(t.status)), '">', esc(t.status), '</span>',
+          '</div>',
+          '<div class="bbl-card-title">', esc(t.title), '</div>',
+          '<div class="bbl-card-sub">from: ', esc(t.created_by_email || t.created_by_name || ''), '</div>',
+          '<div class="bbl-card-foot">',
+            '<span class="', esc(priClass(t.priority)), '" title="', esc(t.priority), ' priority"></span>',
+            '<span>', esc(t.priority), '</span>',
+            t.department ? '<span>·</span><span class="bbl-dept">' + esc(t.department) + '</span>' : '',
+            '<span>·</span><span>', esc(fmtDate(t.created_at)), '</span>',
+          '</div>',
+        '</div>',
+      ].join('');
+    }).join('');
+  }
+
+  function loadAssigned(email) {
+    assignedLoaded = false; assignedEmail = email;
+    assignedPrompt.style.display = 'none';
+    assignedList.innerHTML = '<div class="bbl-loading"><div class="bbl-spinner"></div>Loading assigned tickets…</div>';
+    apiFetch('GET', '/api/widget/assigned-tickets?email=' + encodeURIComponent(email) + '&app=' + encodeURIComponent(CFG.app))
+      .then(function(list){ renderAssignedTickets(list); updateAssignedCounts(list); })
+      .catch(function(err){
+        assignedLoaded = false;
+        assignedList.innerHTML = '<div class="bbl-empty">Could not load assigned tickets.<br><small>' + esc(err.message) + '</small></div>';
+        assignedPrompt.style.display = '';
+      });
   }
 
   function loadDepartments() {
@@ -339,13 +390,13 @@
       form.querySelector('[name=title]').value = '';
       form.querySelector('[name=description]').value = '';
       if (assigneeEl) { assigneeEl.value = ''; }
-      var successMsg = '\u2713 Ticket ' + result.code + ' submitted!';
+      var successMsg = '✓ Ticket ' + result.code + ' submitted!';
       if (assigneeName) successMsg += ' Assigned to ' + assigneeName + '.';
       msgEl.textContent = successMsg;
       msgEl.className = 'bbl-ok'; msgEl.style.display = 'block';
       refreshCounts(email);
     }).catch(function(err) {
-      msgEl.textContent = '\u2717 ' + (err.message || 'Submission failed. Please try again.');
+      msgEl.textContent = '✗ ' + (err.message || 'Submission failed. Please try again.');
       msgEl.className = 'bbl-fail'; msgEl.style.display = 'block';
     }).finally(function() {
       submitBtn.disabled = false; submitBtn.textContent = 'Submit Ticket';
@@ -376,6 +427,7 @@
         '<div id="bbl-tabs">',
           '<button class="bbl-tab bbl-active" data-tab="new">New Ticket</button>',
           '<button class="bbl-tab" data-tab="mine">My Tickets<span id="bbl-mine-badge"></span></button>',
+          '<button class="bbl-tab" data-tab="assigned">Assigned<span id="bbl-assigned-badge"></span></button>',
           CFG.staffEmail ? '<button class="bbl-tab" data-tab="inbox">Inbox<span id="bbl-inbox-badge"></span></button>' : '',
         '</div>',
         '<div id="bbl-body">',
@@ -437,6 +489,15 @@
             '<div id="bbl-ticket-list"></div>',
           '</div>',
 
+          '<div id="bbl-pane-assigned" class="bbl-pane">',
+            '<div id="bbl-assigned-prompt">',
+              '<p id="bbl-assigned-hint" style="font-size:13px;color:#64748b;margin:0 0 8px">Enter your work email to see tickets assigned to you</p>',
+              '<input class="bbl-input" type="email" id="bbl-assigned-email" placeholder="you@company.com" autocomplete="email">',
+              '<button type="button" id="bbl-assigned-go" style="width:100%;padding:8px;background:#f1f5f9;color:#8b5cf6;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;margin-top:6px">Load Assigned Tickets</button>',
+            '</div>',
+            '<div id="bbl-assigned-list"></div>',
+          '</div>',
+
           CFG.staffEmail ? [
             '<div id="bbl-pane-inbox" class="bbl-pane">',
               '<div id="bbl-inbox-list">',
@@ -471,12 +532,20 @@
       paneInbox  = document.getElementById('bbl-pane-inbox');
       inboxList  = document.getElementById('bbl-inbox-list');
     }
+    assignedBadge  = document.getElementById('bbl-assigned-badge');
+    paneAssigned   = document.getElementById('bbl-pane-assigned');
+    assignedList   = document.getElementById('bbl-assigned-list');
+    assignedPrompt = document.getElementById('bbl-assigned-prompt');
+    assignedEmailEl= document.getElementById('bbl-assigned-email');
+    assignedGoBtn  = document.getElementById('bbl-assigned-go');
 
     var saved = getEmail();
     if (saved) {
       form.querySelector('[name=email]').value = saved;
       mineEmailEl.value = saved;
       mineEmail = saved;
+      assignedEmailEl.value = saved;
+      assignedEmail = saved;
     }
 
     btn.addEventListener('click', function(){ isOpen ? close() : open(); });
@@ -488,10 +557,20 @@
       var e = mineEmailEl.value.trim();
       if (!e || !e.includes('@')) { mineEmailEl.classList.add('bbl-err'); return; }
       mineEmailEl.classList.remove('bbl-err');
+      assignedEmailEl.value = e;
       loadTickets(e);
     });
     mineEmailEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') mineGoBtn.click(); });
     mineEmailEl.addEventListener('input', function(){ mineEmailEl.classList.remove('bbl-err'); });
+
+    assignedGoBtn.addEventListener('click', function(){
+      var e = assignedEmailEl.value.trim();
+      if (!e || !e.includes('@')) { assignedEmailEl.classList.add('bbl-err'); return; }
+      assignedEmailEl.classList.remove('bbl-err');
+      loadAssigned(e);
+    });
+    assignedEmailEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') assignedGoBtn.click(); });
+    assignedEmailEl.addEventListener('input', function(){ assignedEmailEl.classList.remove('bbl-err'); });
 
     form.querySelector('[name=department]').addEventListener('change', function(){
       this.classList.remove('bbl-err');
