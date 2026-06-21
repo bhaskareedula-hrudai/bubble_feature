@@ -482,7 +482,7 @@
       '</button>',
       '<div id="bbl-panel">',
         '<div id="bbl-hdr">',
-          '<span id="bbl-hdr-title">', esc(CFG.app), ' Support</span>',
+          '<span id="bbl-hdr-title">', esc(CFG.app), '</span>',
           '<button id="bbl-close" title="Close">&times;</button>',
         '</div>',
         '<div id="bbl-tabs">',
