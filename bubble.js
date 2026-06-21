@@ -331,8 +331,11 @@
   function loadAssigned(dept, name) {
     assignedLoaded = false; assignedDept = dept; assignedName = name || '';
     assignedPrompt.style.display = 'none';
-    assignedList.innerHTML = '<div class="bbl-loading"><div class="bbl-spinner"></div>Loading department tickets…</div>';
-    apiFetch('GET', '/api/widget/assigned-by-dept?department=' + encodeURIComponent(dept) + '&app=' + encodeURIComponent(CFG.app))
+    var loading = name ? 'Loading tickets for ' + name + '…' : 'Loading department tickets…';
+    assignedList.innerHTML = '<div class="bbl-loading"><div class="bbl-spinner"></div>' + esc(loading) + '</div>';
+    var url = '/api/widget/assigned-by-dept?department=' + encodeURIComponent(dept);
+    if (name) url += '&name=' + encodeURIComponent(name);
+    apiFetch('GET', url)
       .then(function(list){ renderAssignedTickets(list); updateAssignedCounts(list); })
       .catch(function(err){
         assignedLoaded = false;
