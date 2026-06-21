@@ -173,16 +173,16 @@
   var form, submitBtn, msgEl, badge;
   var mineBadge, minePrompt, mineEmailEl, mineGoBtn, ticketList;
   var inboxBadge, paneInbox, inboxList;
-  var assignedBadge, paneAssigned, assignedList, assignedPrompt, assignedEmailEl, assignedGoBtn;
+  var assignedBadge, paneAssigned, assignedList, assignedPrompt, assignedNameEl, assignedDeptEl, assignedGoBtn;
 
   var isOpen = false, currentTab = 'new', mineEmail = '', mineLoaded = false, inboxLoaded = false;
-  var assignedEmail = '', assignedLoaded = false;
+  var assignedName = '', assignedDept = '', assignedLoaded = false;
 
   function open() {
     isOpen = true;
     panel.classList.add('bbl-open');
     if (currentTab === 'mine' && mineEmail && !mineLoaded) loadTickets(mineEmail);
-    if (currentTab === 'assigned' && assignedEmail && !assignedLoaded) loadAssigned(assignedEmail);
+    if (currentTab === 'assigned' && assignedDept && !assignedLoaded) loadAssigned(assignedDept, assignedName);
   }
   function close() { isOpen = false; panel.classList.remove('bbl-open'); }
 
@@ -194,17 +194,20 @@
     paneAssigned.classList.toggle('bbl-active', t === 'assigned');
     if (paneInbox) paneInbox.classList.toggle('bbl-active', t === 'inbox');
     if (t === 'mine' && mineEmail && !mineLoaded) loadTickets(mineEmail);
-    if (t === 'assigned' && assignedEmail && !assignedLoaded) loadAssigned(assignedEmail);
+    if (t === 'assigned' && assignedDept && !assignedLoaded) loadAssigned(assignedDept, assignedName);
     if (t === 'inbox' && !inboxLoaded) loadInbox();
   }
 
-  // ── Status action buttons ──────────────────────────────────
-
-  function updateTicketStatus(ticketId, action, email, btn, onSuccess) {
+  function updateTicketStatus(ticketId, action, btn, onSuccess, opts) {
+    opts = opts || {};
     btn.disabled = true;
     var orig = btn.textContent;
     btn.textContent = '…';
-    apiFetch('PATCH', '/api/widget/tickets/' + encodeURIComponent(ticketId) + '/status', { action: action, email: email })
+    var payload = { action: action };
+    if (opts.email)      payload.email              = opts.email;
+    if (opts.actingDept) payload.acting_department  = opts.actingDept;
+    if (opts.actingName) payload.acting_name        = opts.actingName;
+    apiFetch('PATCH', '/api/widget/tickets/' + encodeURIComponent(ticketId) + '/status', payload)
       .then(function() { onSuccess(); })
       .catch(function(err) {
         btn.disabled = false;
@@ -240,8 +243,6 @@
     }
     return btns.length ? '<div class="bbl-actions">' + btns.join('') + '</div>' : '';
   }
-
-  // ── Ticket rendering ───────────────────────────────────────
 
   function renderTickets(list) {
     mineLoaded = true;
@@ -303,7 +304,7 @@
   function renderAssignedTickets(list) {
     assignedLoaded = true;
     if (!list.length) {
-      assignedList.innerHTML = '<div class="bbl-empty">No tickets assigned to you yet.</div>';
+      assignedList.innerHTML = '<div class="bbl-empty">No tickets found for this department.</div>';
       return;
     }
     assignedList.innerHTML = list.map(function(t) {
@@ -327,31 +328,33 @@
     }).join('');
   }
 
-  function loadAssigned(email) {
-    assignedLoaded = false; assignedEmail = email;
+  function loadAssigned(dept, name) {
+    assignedLoaded = false; assignedDept = dept; assignedName = name || '';
     assignedPrompt.style.display = 'none';
-    assignedList.innerHTML = '<div class="bbl-loading"><div class="bbl-spinner"></div>Loading assigned tickets…</div>';
-    apiFetch('GET', '/api/widget/assigned-tickets?email=' + encodeURIComponent(email) + '&app=' + encodeURIComponent(CFG.app))
+    assignedList.innerHTML = '<div class="bbl-loading"><div class="bbl-spinner"></div>Loading department tickets…</div>';
+    apiFetch('GET', '/api/widget/assigned-by-dept?department=' + encodeURIComponent(dept) + '&app=' + encodeURIComponent(CFG.app))
       .then(function(list){ renderAssignedTickets(list); updateAssignedCounts(list); })
       .catch(function(err){
         assignedLoaded = false;
-        assignedList.innerHTML = '<div class="bbl-empty">Could not load assigned tickets.<br><small>' + esc(err.message) + '</small></div>';
+        assignedList.innerHTML = '<div class="bbl-empty">Could not load tickets.<br><small>' + esc(err.message) + '</small></div>';
         assignedPrompt.style.display = '';
       });
   }
 
   function loadDepartments() {
-    var sel = form ? form.querySelector('[name=department]') : null;
-    if (!sel) return;
+    var formSel = form ? form.querySelector('[name=department]') : null;
+    var assignedSel = document.getElementById('bbl-assigned-dept');
+    function setOpts(opts) {
+      if (formSel) formSel.innerHTML = '<option value="">Select department…</option>' + opts;
+      if (assignedSel) assignedSel.innerHTML = '<option value="">Select department…</option>' + opts;
+    }
     apiFetch('GET', '/api/widget/departments')
       .then(function(depts) {
         if (!depts || !depts.length) throw new Error('empty');
-        sel.innerHTML = '<option value="">Select department…</option>' +
-          depts.map(function(d){ return '<option value="' + esc(d.name) + '">' + esc(d.name) + '</option>'; }).join('');
+        setOpts(depts.map(function(d){ return '<option value="' + esc(d.name) + '">' + esc(d.name) + '</option>'; }).join(''));
       })
       .catch(function() {
-        sel.innerHTML = '<option value="">Select department…</option>' +
-          CFG.departments.map(function(d){ return '<option value="' + esc(d) + '">' + esc(d) + '</option>'; }).join('');
+        setOpts(CFG.departments.map(function(d){ return '<option value="' + esc(d) + '">' + esc(d) + '</option>'; }).join(''));
       });
   }
 
@@ -549,9 +552,12 @@
 
           '<div id="bbl-pane-assigned" class="bbl-pane">',
             '<div id="bbl-assigned-prompt">',
-              '<p id="bbl-assigned-hint" style="font-size:13px;color:#64748b;margin:0 0 8px">Enter your work email to see tickets assigned to you</p>',
-              '<input class="bbl-input" type="email" id="bbl-assigned-email" placeholder="you@company.com" autocomplete="email">',
-              '<button type="button" id="bbl-assigned-go" style="width:100%;padding:8px;background:#f1f5f9;color:#8b5cf6;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;margin-top:6px">Load Assigned Tickets</button>',
+              '<p style="font-size:13px;color:#64748b;margin:0 0 8px">Select your department and enter your name</p>',
+              '<select class="bbl-input" id="bbl-assigned-dept" style="margin-bottom:8px">',
+                '<option value="">Select department…</option>',
+              '</select>',
+              '<input class="bbl-input" type="text" id="bbl-assigned-name" placeholder="Your name (e.g. Kalpana)" autocomplete="name" style="margin-bottom:6px">',
+              '<button type="button" id="bbl-assigned-go" style="width:100%;padding:8px;background:#f1f5f9;color:#8b5cf6;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;margin-top:2px">Load Department Tickets</button>',
             '</div>',
             '<div id="bbl-assigned-list"></div>',
           '</div>',
@@ -594,7 +600,8 @@
     paneAssigned   = document.getElementById('bbl-pane-assigned');
     assignedList   = document.getElementById('bbl-assigned-list');
     assignedPrompt = document.getElementById('bbl-assigned-prompt');
-    assignedEmailEl= document.getElementById('bbl-assigned-email');
+    assignedNameEl = document.getElementById('bbl-assigned-name');
+    assignedDeptEl = document.getElementById('bbl-assigned-dept');
     assignedGoBtn  = document.getElementById('bbl-assigned-go');
 
     var saved = getEmail();
@@ -602,8 +609,6 @@
       form.querySelector('[name=email]').value = saved;
       mineEmailEl.value = saved;
       mineEmail = saved;
-      assignedEmailEl.value = saved;
-      assignedEmail = saved;
     }
 
     btn.addEventListener('click', function(){ isOpen ? close() : open(); });
@@ -615,39 +620,37 @@
       var e = mineEmailEl.value.trim();
       if (!e || !e.includes('@')) { mineEmailEl.classList.add('bbl-err'); return; }
       mineEmailEl.classList.remove('bbl-err');
-      assignedEmailEl.value = e;
       loadTickets(e);
     });
     mineEmailEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') mineGoBtn.click(); });
     mineEmailEl.addEventListener('input', function(){ mineEmailEl.classList.remove('bbl-err'); });
 
     assignedGoBtn.addEventListener('click', function(){
-      var e = assignedEmailEl.value.trim();
-      if (!e || !e.includes('@')) { assignedEmailEl.classList.add('bbl-err'); return; }
-      assignedEmailEl.classList.remove('bbl-err');
-      loadAssigned(e);
+      var dept = assignedDeptEl ? assignedDeptEl.value : '';
+      var n = assignedNameEl ? assignedNameEl.value.trim() : '';
+      if (!dept) { assignedDeptEl.classList.add('bbl-err'); return; }
+      assignedDeptEl.classList.remove('bbl-err');
+      loadAssigned(dept, n);
     });
-    assignedEmailEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') assignedGoBtn.click(); });
-    assignedEmailEl.addEventListener('input', function(){ assignedEmailEl.classList.remove('bbl-err'); });
+    if (assignedDeptEl) assignedDeptEl.addEventListener('change', function(){ assignedDeptEl.classList.remove('bbl-err'); });
+    if (assignedNameEl) assignedNameEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') assignedGoBtn.click(); });
 
-    // Action button delegation — My Tickets
     ticketList.addEventListener('click', function(e) {
       var b = e.target.closest('.bbl-act');
       if (!b || b.disabled) return;
-      updateTicketStatus(b.dataset.id, b.dataset.action, mineEmail, b, function() {
+      updateTicketStatus(b.dataset.id, b.dataset.action, b, function() {
         mineLoaded = false;
         loadTickets(mineEmail);
-      });
+      }, { email: mineEmail });
     });
 
-    // Action button delegation — Assigned
     assignedList.addEventListener('click', function(e) {
       var b = e.target.closest('.bbl-act');
       if (!b || b.disabled) return;
-      updateTicketStatus(b.dataset.id, b.dataset.action, assignedEmail, b, function() {
+      updateTicketStatus(b.dataset.id, b.dataset.action, b, function() {
         assignedLoaded = false;
-        loadAssigned(assignedEmail);
-      });
+        loadAssigned(assignedDept, assignedName);
+      }, { actingDept: assignedDept, actingName: assignedName });
     });
 
     form.querySelector('[name=department]').addEventListener('change', function(){
