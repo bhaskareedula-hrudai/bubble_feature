@@ -150,6 +150,20 @@
     '.bbl-act-close:hover:not(:disabled){background:#f1f5f9}',
     '.bbl-act-escalate{color:#ea580c;border-color:#fed7aa;background:#fff7ed}',
     '.bbl-act-escalate:hover:not(:disabled){background:#ffedd5}',
+    '.bbl-file-label{display:block;border:1.5px dashed #c7d2fe;border-radius:8px;padding:10px 12px;',
+    'cursor:pointer;text-align:center;font-size:12px;color:#64748b;background:#f8fafc;',
+    'transition:border-color .15s,background .15s}',
+    '.bbl-file-label:hover{border-color:#4f46e5;background:#eef2ff}',
+    '.bbl-file-preview{margin-top:6px;position:relative}',
+    '.bbl-file-preview img{max-width:100%;max-height:120px;border-radius:6px;display:block;object-fit:contain}',
+    '.bbl-file-clear{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.55);color:#fff;',
+    'border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:13px;line-height:1;padding:0}',
+    '.bbl-attach-wrap{margin-top:8px;padding:6px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0}',
+    '.bbl-attach-wrap img{max-width:100%;max-height:140px;border-radius:4px;display:block;cursor:pointer;object-fit:contain}',
+    '.bbl-attach-dl{display:inline-block;margin-top:5px;font-size:11px;font-weight:600;',
+    'color:#4f46e5;text-decoration:none;padding:2px 8px;border-radius:5px;',
+    'border:1.5px solid #c7d2fe;background:#eef2ff}',
+    '.bbl-attach-dl:hover{background:#e0e7ff}',
     '@media(max-width:420px){',
     '#bbl-panel{width:calc(100vw - 24px);right:12px;bottom:80px}',
     '#bbl-btn{right:12px;bottom:12px}',
@@ -177,6 +191,7 @@
 
   var isOpen = false, currentTab = 'new', mineEmail = '', mineLoaded = false, inboxLoaded = false;
   var assignedName = '', assignedDept = '', assignedLoaded = false;
+  var attachmentData = '', attachmentName = '';
 
   function open() {
     isOpen = true;
@@ -265,6 +280,12 @@
             t.assignee_name ? '<span>·</span><span class="bbl-assignee-tag">→ ' + esc(t.assignee_name) + '</span>' : '',
             '<span>·</span><span>', esc(fmtDate(t.created_at)), '</span>',
           '</div>',
+          t.attachment_data ? [
+            '<div class="bbl-attach-wrap">',
+              '<img src="' + t.attachment_data + '" alt="' + esc(t.attachment_name || 'screenshot') + '" onclick="window.open(this.src)">',
+              '<a class="bbl-attach-dl" href="' + t.attachment_data + '" download="' + esc(t.attachment_name || 'screenshot') + '">↓ Download</a>',
+            '</div>',
+          ].join('') : '',
           myTicketActions(t),
         '</div>',
       ].join('');
@@ -304,7 +325,7 @@
   function renderAssignedTickets(list) {
     assignedLoaded = true;
     if (!list.length) {
-      assignedList.innerHTML = '<div class="bbl-empty">No tickets found for this department.</div>';
+      assignedList.innerHTML = '<div class="bbl-empty">No tickets assigned to you yet.</div>';
       return;
     }
     assignedList.innerHTML = list.map(function(t) {
@@ -322,6 +343,12 @@
             t.department ? '<span>·</span><span class="bbl-dept">' + esc(t.department) + '</span>' : '',
             '<span>·</span><span>', esc(fmtDate(t.created_at)), '</span>',
           '</div>',
+          t.attachment_data ? [
+            '<div class="bbl-attach-wrap">',
+              '<img src="' + t.attachment_data + '" alt="' + esc(t.attachment_name || 'screenshot') + '" onclick="window.open(this.src)">',
+              '<a class="bbl-attach-dl" href="' + t.attachment_data + '" download="' + esc(t.attachment_name || 'screenshot') + '">↓ Download</a>',
+            '</div>',
+          ].join('') : '',
           assignedActions(t),
         '</div>',
       ].join('');
@@ -449,11 +476,20 @@
     apiFetch('POST', '/api/widget/tickets', {
       email, title, description: descr, priority, department,
       app: CFG.app, assignee_id: assigneeId, assignee_name: assigneeName, assignee_email: assigneeEmail,
+      attachment_data: attachmentData || null,
+      attachment_name: attachmentName || null,
     }).then(function(result) {
       saveEmail(email); mineEmail = email; mineEmailEl.value = email; mineLoaded = false;
       form.querySelector('[name=title]').value = '';
       form.querySelector('[name=description]').value = '';
       if (assigneeEl) { assigneeEl.value = ''; }
+      attachmentData = ''; attachmentName = '';
+      var fi = document.getElementById('bbl-file-input');
+      var fp = document.getElementById('bbl-file-preview');
+      var ft = document.getElementById('bbl-file-text');
+      if (fi) fi.value = '';
+      if (fp) fp.style.display = 'none';
+      if (ft) ft.textContent = '📎 Click to attach image (max 2 MB)';
       var successMsg = '✓ Ticket ' + result.code + ' submitted!';
       if (assigneeName) successMsg += ' Assigned to ' + assigneeName + '.';
       msgEl.textContent = successMsg;
@@ -527,6 +563,18 @@
               '<div class="bbl-field">',
                 '<label class="bbl-label">Description *</label>',
                 '<textarea class="bbl-input" name="description" rows="4" placeholder="Describe the issue in detail…" required></textarea>',
+              '</div>',
+
+              '<div class="bbl-field">',
+                '<label class="bbl-label">Screenshot (optional)</label>',
+                '<label class="bbl-file-label" id="bbl-file-label">',
+                  '<span id="bbl-file-text">📎 Click to attach image (max 2 MB)</span>',
+                  '<input type="file" id="bbl-file-input" accept="image/*" style="display:none">',
+                '</label>',
+                '<div class="bbl-file-preview" id="bbl-file-preview" style="display:none">',
+                  '<img id="bbl-file-img" alt="preview">',
+                  '<button type="button" class="bbl-file-clear" id="bbl-file-clear" title="Remove">×</button>',
+                '</div>',
               '</div>',
 
               '<div class="bbl-field">',
@@ -637,6 +685,40 @@
     });
     if (assignedDeptEl) assignedDeptEl.addEventListener('change', function(){ assignedDeptEl.classList.remove('bbl-err'); });
     if (assignedNameEl) assignedNameEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') assignedGoBtn.click(); });
+
+    var fileInput  = document.getElementById('bbl-file-input');
+    var fileLabel  = document.getElementById('bbl-file-label');
+    var filePreview= document.getElementById('bbl-file-preview');
+    var fileImg    = document.getElementById('bbl-file-img');
+    var fileText   = document.getElementById('bbl-file-text');
+    var fileClear  = document.getElementById('bbl-file-clear');
+    if (fileLabel) fileLabel.addEventListener('click', function(){ if (fileInput) fileInput.click(); });
+    if (fileInput) fileInput.addEventListener('change', function(){
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) {
+        msgEl.textContent = 'Image must be under 2 MB.';
+        msgEl.className = 'bbl-fail'; msgEl.style.display = 'block';
+        fileInput.value = '';
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        attachmentData = ev.target.result;
+        attachmentName = file.name;
+        fileImg.src = attachmentData;
+        filePreview.style.display = 'block';
+        fileText.textContent = '✓ ' + file.name;
+      };
+      reader.readAsDataURL(file);
+    });
+    if (fileClear) fileClear.addEventListener('click', function(e){
+      e.preventDefault();
+      attachmentData = ''; attachmentName = '';
+      fileInput.value = '';
+      filePreview.style.display = 'none';
+      fileText.textContent = '📎 Click to attach image (max 2 MB)';
+    });
 
     ticketList.addEventListener('click', function(e) {
       var b = e.target.closest('.bbl-act');
